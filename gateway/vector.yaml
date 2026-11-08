@@ -6,9 +6,10 @@
 # ca_file (mutual TLS); there is no other credential. Each result becomes one
 # NATS message (osquery.vrl). Status logs are dropped.
 #
-# End-to-end acknowledgements: osqueryd gets its HTTP 200 only after the batch
-# is in the disk buffer, so a gateway restart loses nothing; osqueryd keeps and
-# retries a batch that was not accepted.
+# End-to-end acknowledgements with a memory buffer: osqueryd gets its HTTP 200
+# only after NATS JetStream has stored every record of the batch. Until then the
+# batch stays in osqueryd's own on-disk buffer and is retried, so the gateway
+# needs no volume and a gateway restart loses nothing.
 #
 # Environment: NATS_URL, OSQUERY_SUBJECT (default samma.logs.osquery),
 # TLS_DIR (default /etc/osquery-gateway/tls: server.crt, server.key, ca.crt).
@@ -55,6 +56,6 @@ sinks:
     encoding:
       codec: json
     buffer:
-      type: disk
-      max_size: 268435488
+      type: memory
+      max_events: 10000
       when_full: block
