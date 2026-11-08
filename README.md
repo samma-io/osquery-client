@@ -14,7 +14,8 @@ cluster: osquery-gateway (Vector) ── one record per result ──▶ NATS sa
 
 - **Client** (`Dockerfile`, `entrypoint.sh`, `config/`): osqueryd 5.24.1 with
   the TLS logger. It buffers results on disk and retries until the gateway
-  accepts them.
+  accepts them. The gateway answers only once NATS has stored the batch
+  (end-to-end acknowledgements), so nothing is lost between the two.
 - **Gateway** (`gateway/`): Vector's `http_server` source with TLS. It only
   accepts clients whose certificate our CA signed. `osquery.vrl` splits each
   batch into one record per result and adds `source`, `feed`, `event_time`,
@@ -101,7 +102,10 @@ fields:
 ```
 
 `hostIdentifier` is chosen by the client. `gateway_peer` is the address the
-gateway saw, so it can't be spoofed by the client itself.
+gateway saw, which the client does not choose. Behind a Kubernetes NodePort
+with the default `externalTrafficPolicy: Cluster` it is a node address, not
+the host's. The client certificate's name is not passed on, so
+`hostIdentifier` should match the name the certificate was issued to.
 
 ## Tests
 
