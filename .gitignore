@@ -1,0 +1,6 @@
+# Keys and certificates: never committed. pki/out holds the CA key.
+pki/out/
+*.key
+*.pem
+*.crt
+*.srl

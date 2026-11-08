@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# The Dockerfile pins osquery's public apt signing-key fingerprint, which the
+# generic-api-key rule reads as a secret. Only that exact value is allowed.
+[[allowlists]]
+description = "osquery apt signing key fingerprint (public)"
+regexes = ['''1484120AC4E9F8A1A577AEEE97A80C63C9D8B80B''']

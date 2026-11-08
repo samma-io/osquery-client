@@ -1,0 +1,66 @@
+# Unit tests for the gateway transform: vector test gateway/vector.yaml gateway/tests/osquery_split.yaml
+tests:
+  - name: a result batch becomes one record per result
+    inputs:
+      - insert_at: osquery_split
+        type: vrl
+        source: |
+          . = {
+            "node_key": "",
+            "log_type": "result",
+            "gateway_peer": "192.0.2.10",
+            "data": [
+              {"name": "samma_listening_ports", "hostIdentifier": "host-a", "unixTime": 1794154211,
+               "calendarTime": "Sun Nov  8 16:10:11 2026 UTC", "action": "added",
+               "columns": {"pid": "436", "name": "sshd", "port": "22", "protocol": "6", "family": "2", "address": "0.0.0.0"}},
+              {"name": "samma_listening_ports", "hostIdentifier": "host-a", "unixTime": 1794154211,
+               "calendarTime": "Sun Nov  8 16:10:11 2026 UTC", "action": "removed",
+               "columns": {"pid": "512", "name": "nginx", "port": "80", "protocol": "6", "family": "2", "address": "0.0.0.0"}}
+            ]
+          }
+    outputs:
+      - extract_from: osquery_split
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.source, "osquery")
+              assert_eq!(.feed, "result")
+              assert_eq!(.name, "samma_listening_ports")
+              assert_eq!(.event_time, "2026-11-08T16:10:11.000Z")
+              assert_eq!(.gateway_peer, "192.0.2.10")
+              assert!(exists(.columns.port))
+              assert!(starts_with(string!(.search_text), "samma_listening_ports "))
+              assert!(!exists(.node_key))
+              assert!(!exists(.data))
+
+  - name: a status batch is dropped
+    inputs:
+      - insert_at: osquery_split
+        type: vrl
+        source: |
+          . = {"node_key": "", "log_type": "status", "data": [{"severity": "1", "message": "warning"}]}
+    no_outputs_from:
+      - osquery_split
+
+  - name: an empty result batch is dropped
+    inputs:
+      - insert_at: osquery_split
+        type: vrl
+        source: |
+          . = {"node_key": "", "log_type": "result", "data": []}
+    no_outputs_from:
+      - osquery_split
+
+  - name: a string unixTime still gives event_time
+    inputs:
+      - insert_at: osquery_split
+        type: vrl
+        source: |
+          . = {"log_type": "result", "data": [{"name": "samma_heartbeat", "action": "added", "unixTime": "1794154211", "columns": {"version": "5.24.1"}}]}
+    outputs:
+      - extract_from: osquery_split
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.event_time, "2026-11-08T16:10:11.000Z")
+              assert!(!exists(.gateway_peer))
