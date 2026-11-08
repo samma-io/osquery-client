@@ -70,7 +70,15 @@ over those need extra read-only mounts and are left out on purpose.
      ghcr.io/samma-io/osquery-client:<tag>
    ```
    `--add-host` makes the name in the server certificate resolve to the
-   cluster node. The `osquery-client-db` volume keeps osquery's buffer and the
+   cluster node.
+
+   **Socket owners (opt-in).** Under Docker's default AppArmor profile, osquery
+   cannot read other processes' file descriptors, so `samma_listening_ports`
+   reports most sockets with `pid -1` and no process name (on a test host, 154
+   of 158). Adding `--cap-add SYS_PTRACE --security-opt apparmor=unconfined`
+   resolves them (6 of 98 unknown on the same host). That lifts the AppArmor
+   confinement of a root container that already shares the host's PID and
+   network namespaces, so it is left to the operator. The `osquery-client-db` volume keeps osquery's buffer and the
    differential state across restarts.
 
 | Variable | Default | Meaning |
