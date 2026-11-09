@@ -82,6 +82,35 @@ over those need extra read-only mounts and are left out on purpose.
 
 Extra container arguments are passed to `osqueryd`, e.g. `--verbose`.
 
+`<node-ip>` is the address of any Ready node in the cluster; a NodePort answers
+on every node. The operator who runs the cluster gives it to you along with the
+certificate folder.
+
+## Check a host
+
+**Before starting the client**, test the certificate and the address. This sends
+an empty status batch, which the gateway accepts and drops, so nothing is stored:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  --resolve osquery-gateway:30516:<node-ip> \
+  --cacert my-host/ca.crt --cert my-host/client.crt --key my-host/client.key \
+  -H 'Content-Type: application/json' -d '{"node_key":"","log_type":"status","data":[]}' \
+  https://osquery-gateway:30516/log
+```
+
+| Result | Meaning |
+|---|---|
+| `200` | certificate and address are good; start the client |
+| `000` with a TLS or handshake error | the gateway refused the certificate: wrong CA, expired, or the wrong files |
+| `000` with "connection refused" or a timeout | wrong `<node-ip>`, the node is down, or a firewall blocks 30516 |
+
+**After starting it**, `docker logs osquery-client` prints the gateway it sends
+to. osqueryd logs nothing on success; with `--verbose` appended to `docker run`
+it logs each upload. The first `samma_heartbeat` reaches the SIEM within 5
+minutes; the operator can see it with the query in `samma-io/deploy`
+`siem/README.md` ("osquery lane", **Check**).
+
 ## Revoking a host
 
 There is no revocation list. A client certificate is valid for one year.
