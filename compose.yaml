@@ -1,0 +1,62 @@
+# osquery-client on one host, with the full host view: scheduled tables plus
+# real-time process, socket and file events.
+#
+#   cp compose.yaml /opt/osquery-client/ && cd /opt/osquery-client
+#   # put this host's ca.crt, client.crt and client.key in ./certs
+#   OSQUERY_GATEWAY_IP=<node-ip> OSQUERY_HOST_IDENTIFIER=my-host docker compose up -d
+#
+# What the privileges are for (see README, "Privileges"):
+#   pid/network host       the host's processes, sockets and listeners
+#   SYS_ADMIN, BPF, PERFMON, memlock, no AppArmor/seccomp, /sys/kernel/debug
+#                          eBPF process and socket events
+#   SYS_PTRACE             which process owns each listening socket
+#   read-only host mounts  the tables that read fixed paths (users, sudoers,
+#                          crontab, packages, logins) and, under /host, the
+#                          file watch and the setuid scan
+# The container can read the whole host file system and trace every process.
+# Treat it like a root agent. On a host where that is not acceptable, drop the
+# event privileges and set OSQUERY_EVENTS=false.
+services:
+  osquery-client:
+    image: ghcr.io/samma-io/osquery-client:${OSQUERY_CLIENT_TAG:?set OSQUERY_CLIENT_TAG to a published tag (short commit sha)}
+    container_name: osquery-client
+    restart: unless-stopped
+    pid: host
+    network_mode: host
+    extra_hosts:
+      - "osquery-gateway:${OSQUERY_GATEWAY_IP:?set OSQUERY_GATEWAY_IP to a cluster node address}"
+    environment:
+      OSQUERY_GATEWAY: osquery-gateway:30516
+      OSQUERY_HOST_IDENTIFIER: ${OSQUERY_HOST_IDENTIFIER:?set OSQUERY_HOST_IDENTIFIER to the name on the client certificate}
+      OSQUERY_EVENTS: "true"
+    cap_add: [SYS_ADMIN, BPF, PERFMON, SYS_PTRACE]
+    security_opt:
+      - apparmor=unconfined
+      - seccomp=unconfined
+      - label=disable
+    ulimits:
+      memlock: -1
+    volumes:
+      - ./certs:/etc/osquery/certs:ro
+      - osquery-client-db:/var/osquery
+      # eBPF tracepoints
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+      # tables that read fixed paths
+      - /var/run/utmp:/var/run/utmp:ro
+      - /var/log/wtmp:/var/log/wtmp:ro
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+      - /etc/sudoers:/etc/sudoers:ro
+      - /etc/sudoers.d:/etc/sudoers.d:ro
+      - /etc/crontab:/etc/crontab:ro
+      - /etc/cron.d:/etc/cron.d:ro
+      - /var/spool/cron:/var/spool/cron:ro
+      - /etc/os-release:/etc/os-release:ro
+      - /var/lib/dpkg:/var/lib/dpkg:ro
+      - /home:/home:ro
+      - /root:/root:ro
+      # file watch and setuid scan
+      - /:/host:ro
+
+volumes:
+  osquery-client-db:
