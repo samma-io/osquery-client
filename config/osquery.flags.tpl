@@ -12,7 +12,14 @@
 --host_identifier=specified
 --specified_identifier=${OSQUERY_HOST_IDENTIFIER}
 --utc=true
---disable_events=true
+--disable_events=${OSQUERY_DISABLE_EVENTS}
+--enable_bpf_events=${OSQUERY_EVENTS}
+--enable_file_events=${OSQUERY_EVENTS}
+--disable_audit=true
+--events_expiry=3600
+--events_max=50000
+--watchdog_memory_limit=${OSQUERY_WATCHDOG_MEMORY_MB}
+--watchdog_utilization_limit=${OSQUERY_WATCHDOG_CPU_PERCENT}
 --database_path=/var/osquery/osquery.db
 --pidfile=/var/osquery/osqueryd.pidfile
 --force=true

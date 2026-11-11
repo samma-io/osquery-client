@@ -42,6 +42,8 @@ services:
     environment:
       OSQUERY_GATEWAY: osquery-gateway:8443
       OSQUERY_TLS_PERIOD: "2"
+      # CI runners do not grant the eBPF privileges; the e2e test covers transport.
+      OSQUERY_EVENTS: "false"
     volumes:
       - ${E2E_PKI}/client:/etc/osquery/certs:ro
       - ./osquery.e2e.conf:/etc/osquery/osquery.conf:ro
