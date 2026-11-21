@@ -31,18 +31,60 @@ cluster: osquery-gateway (Vector) ── one record per result ──▶ NATS sa
 | Query | Every | Needs |
 |---|---|---|
 | `samma_heartbeat`: osquery version, pid, start time, now | 5 min | nothing; one row per run proves the path |
-| `samma_listening_ports`: port, protocol, address, owning process | 10 min | `--network=host`, `--pid=host` |
-| `samma_processes`: pid, parent, name, path, uid (no command line) | 1 h | `--pid=host` |
-| `samma_logged_in_users`: interactive sessions | 10 min | `/var/run/utmp` mounted read-only |
+| `samma_process_events`: every program started (pid, parent, uid, path, exit code) | 1 min | events (below) |
+| `samma_socket_events`: outbound connects and inbound accepts, not loopback or DNS | 1 min | events |
+| `samma_file_events`: changes to account, sudo, SSH and cron files, `.ssh` folders and the binary folders | 1 min | events, `/` at `/host` |
+| `samma_listening_ports`: port, protocol, address, owning process | 10 min | `--network=host`, `--pid=host`, `SYS_PTRACE` for the owner |
+| `samma_logged_in_users`: interactive sessions | 10 min | `/var/run/utmp` |
+| `samma_users`: local accounts | 10 min | `/etc/passwd` |
+| `samma_admin_group_members`: members of root, sudo, wheel, adm, docker | 10 min | `/etc/passwd`, `/etc/group` |
+| `samma_authorized_keys`: SSH public keys that can log in | 10 min | `/home`, `/root`, `/etc/passwd` |
+| `samma_crontab`: system and user crontabs | 10 min | `/etc/crontab`, `/etc/cron.d`, `/var/spool/cron` |
+| `samma_sudoers`: sudo rules | 10 min | `/etc/sudoers`, `/etc/sudoers.d` |
+| `samma_kernel_modules`: loaded modules | 10 min | nothing |
+| `samma_last_logins`: login and logout history | 10 min | `/var/log/wtmp` |
+| `samma_processes`: pid, parent, name, path, uid | 1 h | `--pid=host` |
 | `samma_kernel_uptime`: kernel version, uptime in days | 1 h | nothing |
+| `samma_packages`: deb and rpm packages | 1 h | `/var/lib/dpkg` (or `/var/lib/rpm`) |
+| `samma_suid_binaries`: setuid and setgid programs in `/usr` | 1 h | `/` at `/host` |
+| `samma_os_version`: distribution and version | 1 h | `/etc/os-release` |
 
-All queries are differential: after the first run, only rows that were
-`added` or `removed` are sent. Command lines are left out because they can
-carry secrets.
+"Needs" means a read-only mount of that host path, all of which are in
+[`compose.yaml`](compose.yaml). Without a mount, a query reads the container's
+own file instead, which says nothing about the host.
 
-What the container does **not** see: the host's packages, users and files,
-because osquery reads the container's own `/etc` and `/var/lib/dpkg`. Queries
-over those need extra read-only mounts and are left out on purpose.
+- **Differential.** Scheduled tables send only rows that were `added` or
+  `removed` since the last run. The first run on a host sends everything, with
+  `counter: 0`; detection rules on these tables skip it, so a new host's
+  baseline does not alert.
+- **Events.** Process and socket events come from eBPF; file events come from
+  inotify on the read-only `/host` mount. They are real-time, collected by
+  osquery as they happen and sent once a minute.
+- **Left out.** Command lines, because they carry secrets. Compilers, container
+  runtimes, firewall tooling and polling commands (`ps`, `pgrep`, `loginctl`,
+  `pg_isready`) are left out of process events, and DNS lookups out of socket
+  events: on a busy host they are most of the volume and none of the signal.
+- **Volume.** On the test host (a developer machine running Kubernetes tools and
+  Docker) the events come to about 10 to 20 MiB an hour, almost all of it
+  process and socket events.
+
+## Privileges
+
+Events need the container to trace the host's kernel. `compose.yaml` grants
+`SYS_ADMIN`, `BPF`, `PERFMON` and `SYS_PTRACE`, unlimited locked memory, no
+AppArmor or seccomp confinement, and the host's `/sys/kernel/debug`. It also
+mounts the host's `/` read-only. **Treat the container like a root agent on the
+host.** That is the price of seeing every process start and every file change.
+
+On a host where that is not acceptable, run without events: drop the
+capabilities, the security options, `memlock`, `/sys/kernel/debug` and the `/`
+mount, and set `OSQUERY_EVENTS=false`. The scheduled tables still work.
+
+`SYS_PTRACE` and no AppArmor confinement are also what let osquery see which
+process owns each listening socket. Under Docker's default AppArmor profile it
+cannot read other processes' file descriptors, so `samma_listening_ports`
+reports most sockets with `pid -1` and no process name: 154 of 158 on a test
+host, against 6 of 98 with both settings.
 
 ## Run it on a host
 
@@ -57,28 +99,15 @@ over those need extra read-only mounts and are left out on purpose.
    ```bash
    pki/issue-client.sh my-host    # -> pki/out/clients/my-host/{ca.crt,client.crt,client.key}
    ```
-3. **On the host:**
+3. **On the host:** copy [`compose.yaml`](compose.yaml) and the certificate
+   folder (as `./certs`) to one directory, then:
    ```bash
-   docker run -d --name osquery-client --restart unless-stopped \
-     --pid=host --network=host \
-     --add-host osquery-gateway:<node-ip> \
-     -e OSQUERY_GATEWAY=osquery-gateway:30516 \
-     -e OSQUERY_HOST_IDENTIFIER=my-host \
-     -v /path/to/my-host:/etc/osquery/certs:ro \
-     -v /var/run/utmp:/var/run/utmp:ro \
-     -v osquery-client-db:/var/osquery \
-     ghcr.io/samma-io/osquery-client:<tag>
+   OSQUERY_CLIENT_TAG=<tag> OSQUERY_GATEWAY_IP=<node-ip> OSQUERY_HOST_IDENTIFIER=my-host \
+     docker compose up -d
    ```
-   `--add-host` makes the name in the server certificate resolve to the
-   cluster node.
-
-   **Socket owners (opt-in).** Under Docker's default AppArmor profile, osquery
-   cannot read other processes' file descriptors, so `samma_listening_ports`
-   reports most sockets with `pid -1` and no process name (on a test host, 154
-   of 158). Adding `--cap-add SYS_PTRACE --security-opt apparmor=unconfined`
-   resolves them (6 of 98 unknown on the same host). That lifts the AppArmor
-   confinement of a root container that already shares the host's PID and
-   network namespaces, so it is left to the operator. The `osquery-client-db` volume keeps osquery's buffer and the
+   `<tag>` is a published image tag (a short commit sha from `main`). The
+   gateway name in the server certificate is mapped to `<node-ip>` with
+   `extra_hosts`. The `osquery-client-db` volume keeps osquery's buffer and the
    differential state across restarts.
 
 | Variable | Default | Meaning |
@@ -87,8 +116,40 @@ over those need extra read-only mounts and are left out on purpose.
 | `OSQUERY_HOST_IDENTIFIER` | container hostname | `hostIdentifier` on every record |
 | `OSQUERY_CERT_DIR` | `/etc/osquery/certs` | holds `ca.crt`, `client.crt`, `client.key` |
 | `OSQUERY_TLS_PERIOD` | `10` | seconds between uploads |
+| `OSQUERY_EVENTS` | `true` | process, socket and file events; `false` on a host without the event privileges |
+| `OSQUERY_WATCHDOG_MEMORY_MB` | `400` | osquery restarts its worker above this; events in flight are lost |
+| `OSQUERY_WATCHDOG_CPU_PERCENT` | `40` | the same, for sustained CPU |
 
 Extra container arguments are passed to `osqueryd`, e.g. `--verbose`.
+
+`<node-ip>` is the address of any Ready node in the cluster; a NodePort answers
+on every node. The operator who runs the cluster gives it to you along with the
+certificate folder.
+
+## Check a host
+
+**Before starting the client**, test the certificate and the address. This sends
+an empty status batch, which the gateway accepts and drops, so nothing is stored:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  --resolve osquery-gateway:30516:<node-ip> \
+  --cacert my-host/ca.crt --cert my-host/client.crt --key my-host/client.key \
+  -H 'Content-Type: application/json' -d '{"node_key":"","log_type":"status","data":[]}' \
+  https://osquery-gateway:30516/log
+```
+
+| Result | Meaning |
+|---|---|
+| `200` | certificate and address are good; start the client |
+| `000` with a TLS or handshake error | the gateway refused the certificate: wrong CA, expired, or the wrong files |
+| `000` with "connection refused" or a timeout | wrong `<node-ip>`, the node is down, or a firewall blocks 30516 |
+
+**After starting it**, `docker logs osquery-client` prints the gateway it sends
+to. osqueryd logs nothing on success; with `--verbose` appended to `docker run`
+it logs each upload. The first `samma_heartbeat` reaches the SIEM within 5
+minutes; the operator can see it with the query in `samma-io/deploy`
+`siem/README.md` ("osquery lane", **Check**).
 
 ## Revoking a host
 
