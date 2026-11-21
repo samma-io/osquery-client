@@ -80,6 +80,12 @@ On a host where that is not acceptable, run without events: drop the
 capabilities, the security options, `memlock`, `/sys/kernel/debug` and the `/`
 mount, and set `OSQUERY_EVENTS=false`. The scheduled tables still work.
 
+`SYS_PTRACE` and no AppArmor confinement are also what let osquery see which
+process owns each listening socket. Under Docker's default AppArmor profile it
+cannot read other processes' file descriptors, so `samma_listening_ports`
+reports most sockets with `pid -1` and no process name: 154 of 158 on a test
+host, against 6 of 98 with both settings.
+
 ## Run it on a host
 
 1. **Once, on the operator's machine:** create the CA and the gateway's
