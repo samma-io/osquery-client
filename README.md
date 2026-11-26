@@ -19,9 +19,11 @@ cluster: osquery-gateway (Vector) ── one record per result ──▶ NATS sa
 - **Gateway** (`gateway/`): Vector's `http_server` source with TLS. It only
   accepts clients whose certificate our CA signed. `osquery.vrl` splits each
   batch into one record per result and adds `source`, `feed`, `event_time`,
-  `search_text` and `gateway_peer`. Status logs are dropped. The cluster
-  deployment lives in `samma-io/deploy` (`siem/60-osquery-gateway.yaml`) and
-  copies this config.
+  `search_text` and `gateway_peer`. Status logs are dropped. Two cluster
+  deployments copy this config: the `samma-siem` chart (0.5.0 or later) with
+  `detections.osquery.enabled` and `osqueryGateway.existingSecret` (its
+  `files/osquery-gateway/`), and the hand-applied v2 manifest in
+  `samma-io/deploy` (`siem/60-osquery-gateway.yaml`). Change it here first.
 - **PKI** (`pki/`): scripts for the CA, the gateway's server certificate and
   one client certificate per host. Nothing they produce is committed
   (`pki/out/` is in `.gitignore`).
